@@ -1,0 +1,147 @@
+# Predicting the Manner in which an Exercise is Performed
+#### MW Hertneck, May 7, 2015  
+
+## Introduction  
+
+The goal of this project was to use data from accelerometers on the belt, forearm, arm, and dumbbell of six participants to create a model that predicts the manner in which they do the exercise ("classe" variable in the data sets). Details about the data sets, how the data was collected, and the goals of the original study are available from http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset specifically). The following describes how I built the model, how I used cross validation, my expected out of sample error percentage, and the choices behind my actions. 
+
+## Initial Setup and Data Preparation  
+
+First, I set the working directory and loaded appropriate libraries.  I downloaded the following files to the working directory:
+
+__Training Data__: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv  
+__Testing Data__: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+I then read the Training Data into a dataframe.
+```{r setup, include=FALSE}
+# set working directory
+setwd("C:/Users/margie/Google Drive/Coursera_Data_Scientist/MLProject")
+
+#load libraries (install if needed)
+library(caret)
+library(MASS)
+library(randomForest)
+library(ggplot2)
+library(beepr)
+
+# download training file
+#trainURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+#download.file(trainURL,destfile = "training.csv", mode = "wb")
+#rm(trainURL)
+
+#testURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+#download.file(testURL,destfile = "finaltest.csv", mode = "wb")
+#rm(testURL)
+```
+
+```{r load_training, echo=FALSE}
+training<-read.csv("training.csv",header = TRUE, na.strings=c("#DIV/0!","NA") )
+dim(training)
+```
+
+Next, I partitioned the training dataset into training (60%) and validation (40%) datasets which were used to train a model and test the model's ability to predict accurately before using it on the "live" testing set of 20 cases.
+
+```{r partition, echo=FALSE}
+set.seed(95815)
+TrainIndex = createDataPartition(training$classe, p = 0.60, list = FALSE)
+testing.pre = training[-TrainIndex,]
+training.pre = training[TrainIndex,]
+rm(training, TrainIndex) 
+cat("dataset called testing.pre:")
+dim(testing.pre)
+cat("dataset called training.pre:")
+dim(training.pre)
+```
+
+The training.pre dataset consisted of 11776 observations and the testing.pre dataset of 7846 observations.  Both datasets originally had 160 variables.  I viewed the top and bottom of the training.pre dataset to become familiar with the data to determine which variables were necessary to predict the outcome (variable "classe"). 
+
+```{r view_sample, echo=FALSE}
+x <- rbind(head(training.pre,5),tail(training.pre,5))
+utils::View(x) #separate window opens; RStudio truncates view/dimensions/structure
+rm(x)
+```
+
+By viewing the dataset, I determined that direct measurements are the only variables necessary; I removed metadata (such as.user name, timestamps, etc.), summary/descriptive variables (such as max, kurtosis, etc.), and any data with a preponderance of "NA" values from both datasets.  This reduced the datasets to 53 variables: 52 measurements plus outcome "classe."  
+
+```{r cleanup, echo=FALSE}
+training.pre <- training.pre[, -grep("kurtosis|skewness|max|min|amplitude|var|avg|stddev|window|timestamp|X|user_name", 
+                                     names(training.pre))]  
+cat("New dimensions of training.pre:")
+dim(training.pre)
+
+testing.pre <- testing.pre[, -grep("kurtosis|skewness|max|min|amplitude|var|avg|stddev|window|timestamp|X|user_name", 
+                                   names(testing.pre))]  
+cat("New dimensions of testing.pre:")
+dim(testing.pre)
+```
+
+## Model Building and Validation
+
+I selected Random Forest for model building, specifying the resampling method as "cv" for cross-validation and "10" as the number of resampling iterations.  Random Forest was selected not only for its high accuracy rate, but also because the original study used this method with 10 resampling iterations specified.  Note that this took approximately 35 minutes (time varies by machine and setup).
+
+```{r model, echo=FALSE}
+#start with Random Forest, with 10 fold cross val specified
+fit.rf <- train(classe~., data=training.pre, 
+                method="rf", 
+                trControl=trainControl(method="cv",number=10), 
+                importance=TRUE)
+beep("work_complete.wav")
+fit.rf
+```
+
+The final value used for the model was mtry = 2 with an accuracy of 0.989 (i.e., in-sample error rate =1.1%).  I then used the model against the validation data (testing.pre) to estimate the out-of-sample error:
+
+```{r predict, echo=FALSE}
+#use model to predict against validation sample
+predict.rf <- predict(fit.rf, newdata=testing.pre)
+conf.rf <- confusionMatrix(predict.rf,testing.pre$classe)
+conf.rf
+
+```
+
+The estimated out-of-sample error based on 0.992 accuracy in the confusion matrix is 0.08%; typically the out-of-sample error is slightly higher.  The following scatterplot illustrates the error; particularly note the errors in predictions for classes B, C and D:
+
+```{r error_plot, echo=FALSE}
+#plot of actual against predicted values
+qplot(testing.pre$classe,predict.rf, 
+      main="Actual vs. Predicted values (testing.pre)",
+      color=testing.pre$classe, geom="jitter")
+```
+
+## Applying the Model against Project Test Data
+
+I then loaded the project testing data, prepared the data in the same manner as the training data above (resulting in 53 variables), and predicted using the developed model.
+
+```{r finaltest, echo=FALSE}
+finaltest<-read.csv("finaltest.csv",header = TRUE, na.strings=c("#DIV/0!","NA") )
+
+finaltest <- finaltest[, -grep("kurtosis|skewness|max|min|amplitude|var|avg|stddev|window|timestamp|X|user_name", 
+                               names(finaltest))]  
+
+cat("New dimensions of finaltest dataset:")
+dim(finaltest)
+
+#use model to predict against finaltest data
+predict.rf <- predict(fit.rf, newdata=finaltest)
+```
+
+The results of predicting the 20 test cases were then uploaded as outlined in the prediction assignment submission instructions with a 100% success rate.    
+
+```{r format_final, include=FALSE}
+#load this function 
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+#create a folder where you want the files to be written. Set that to be your working directory and run: 
+pml_write_files(predict.rf)
+
+#clean up memory
+rm(list=ls()) 
+```
+
+
